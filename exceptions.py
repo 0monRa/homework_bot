@@ -12,8 +12,3 @@ class TelegramAPIError(Exception):
 
 class TelegramAPIStatusCodeError(Exception):
     pass
-
-
-class HomeworkStatusError(Exception):
-    """Исключение для ошибок статуса домашней работы."""
-    pass
