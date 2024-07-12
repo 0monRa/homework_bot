@@ -12,3 +12,11 @@ class TelegramAPIError(Exception):
 
 class TelegramAPIStatusCodeError(Exception):
     pass
+
+
+class TelegramSendMessageError(Exception):
+    pass
+
+
+class JSONCodeError(Exception):
+    pass

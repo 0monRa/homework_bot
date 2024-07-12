@@ -10,6 +10,8 @@ from telebot import TeleBot
 
 load_dotenv()
 
+TIME_FOR_CHECK_HOMEWORKS = 120
+
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
@@ -39,14 +41,27 @@ def check_tokens():
         'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID
     }
 
+    token_missed = []
+    token_empty = []
+
     for name, token in token_list.items():
         if token is None:
-            raise exceptions.TokenDosentExistError(
-                f'Переменной {name} не существует!'
-            )
+            token_missed.append(name)
         if token == '':
+            token_empty.append(name)
+
+    if token_missed or token_empty:
+        tokens_error = ', '.join(token_missed)
+        logging.critical(f'Missing environment variables: {tokens_error}')
+        if token_missed:
+            tokens_error = ", ".join(token_missed)
+            raise exceptions.TokenDosentExistError(
+                f'Не существует следующих переменных: {tokens_error}'
+            )
+        if token_empty:
+            tokens_error = ", ".join(token_empty)
             raise exceptions.TokenIsEmptyError(
-                f'Значение переменной {name} не может быть пустым!'
+                f'Следующие переменные не могут быть путсыми: {tokens_error}'
             )
     return True
 
@@ -57,7 +72,9 @@ def send_message(bot, message):
         bot.send_message(TELEGRAM_CHAT_ID, message)
         logging.debug(f'Сообщение отправлено: {message}')
     except Exception as error:
-        logging.error(f'Произошел сбой при отправке сообщения: {error}')
+        raise exceptions.TelegramSendMessageError(
+            f'Ошибка при отправке сообщения: {error}'
+        )
 
 
 def get_api_answer(timestamp):
@@ -66,18 +83,22 @@ def get_api_answer(timestamp):
     try:
         response = requests.get(ENDPOINT, headers=HEADERS, params=params)
         response.raise_for_status()
-        if response.status_code == HTTPStatus.OK:
-            return response.json()
-        else:
-            logging.error(f'Status code: {response.status_code}.')
-            raise exceptions.TelegramAPIStatusCodeError(
-                f'API вернул статус {response.status_code}'
-            )
     except requests.RequestException as error:
-        logging.error(f'Ошибка при запросе к API: {error}')
         raise exceptions.TelegramAPIError(
             f'Ошибка при запросе к API: {error}'
         )
+
+    if response.status_code != HTTPStatus.OK:
+        raise exceptions.TelegramAPIStatusCodeError(
+            f'API вернул статус {response.status_code}'
+        )
+
+    try:
+        response_json = response.json()
+    except ValueError as error:
+        raise exceptions.JSONCodeError(f'Ошибка при запросе JSON: {error}')
+
+    return response_json
 
 
 def check_response(response):
@@ -105,17 +126,12 @@ def parse_status(homework):
 
 def main():
     """Основная логика работы программы."""
-    try:
-        check_tokens()
-    except (
-        exceptions.TokenDosentExistError,
-        exceptions.TokenIsEmptyError
-    ) as error:
-        logging.critical(error)
+    if not check_tokens():
         return
 
     bot = TeleBot(TELEGRAM_TOKEN)
-    timestamp = int(time.time())
+    timestamp = int(time.time()) - TIME_FOR_CHECK_HOMEWORKS
+    last_error = str()
 
     while True:
         try:
@@ -126,11 +142,19 @@ def main():
                 send_message(bot, message)
             else:
                 logging.debug('Статус не изменился.')
-            timestamp = int(time.time())
+            timestamp = response.get("current_date", timestamp)
+            last_error = ''
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logging.error(message)
-            send_message(bot, message)
+            if last_error != message:
+                try:
+                    send_message(bot, message)
+                    last_error = message
+                except exceptions.TelegramSendMessageError as send_error:
+                    logging.error(
+                        f'Ошибка при отправке сообщения: {send_error}'
+                    )
         time.sleep(RETRY_PERIOD)
 
 
